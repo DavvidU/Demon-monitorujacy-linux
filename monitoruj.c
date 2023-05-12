@@ -303,7 +303,14 @@ int main (int argc, char **argv)
     }
 
     signal(SIGUSR1, handler); //TODO obsluga bledow!
-
+	
+	// #include <string.h> :OOOOOOOOOOOOOOOO
+	// char *nazwa_katalogu_zapisu_tmp = strrchr(katalog_zrodlowy, '/'); // nazwa to /TOCOCHCE
+	// char nazwa_katalogu_zapisu[strlen(nazwa_katalogu_zapisu_tmp)];
+	// strcpy(nazwa_katalogu_zapisu, nazwa_katalogu_zapisu_tmp + 1);
+	// nazwa_katalogu_zapisu_tmp = NULL;
+	// chdir(katalog_docelowy);
+	// mkdir(nazwa_katalogu_zapisu, S_IRWXU); // u+rwx
     while (1)
     {
         sigprocmask (SIG_UNBLOCK, &sygnaly_do_blokowania, NULL);
@@ -313,6 +320,17 @@ int main (int argc, char **argv)
             "Przebudzenie demona - sygnal SIGUSR1");
         }
         /* skan katalogu zrodlowego */
+		//------------------------------------------------------ WADY I ZALETY MMAP, jaka jest roznica miedzy strategia right through i right behind przy realizacji pamieci dysku jakeigso  tam HDD, dlaczego żadka spotyka sie systemy plikow  , jak dziala prealokacja blokow w systemie plikow, gdzie przechowywane sa atrybuty plikow w systemie FAT32 a gdzie w systemie unixowym , jak dziala indexowanie posrednie i czemu w praktyce mu so by c potronjnie potrzebbrne, dlaczego na gearf opisujacy strukture (jaka?) nazucony jest warunek acyklicznosci
+		// if( (mkdir(tablica od return do konca, 0777)) == -1)
+		//{
+			//blad = errno;
+			//syslog(LOG_MAKEPRI(LOG_USER, LOG_WARNING), "%s (exit)", strerror(blad));
+			//exit(EXIT_FAILURE);
+		//} 
+		// chdir("%s/nazwa_fold", katalog_docelowy);
+		//--------------------------------------------------------- albo (bo chyba mam juz nazwe katalogu)
+		//
+		
 
         /* zrob cala reszte*/
 
