@@ -26,8 +26,10 @@
 *                                                                   *
 ********************************************************************/
 
+#define _POSIX_SOURCE // SIG_BLOCK
 #include <stdio.h> 
-#include <stdlib.h>
+#include <stdlib.h> // realpath
+#include <signal.h> //sig_atomic_t typ
 #include <getopt.h>
 #include <sys/types.h> // pid_t
 #include <sys/stat.h>
@@ -36,16 +38,27 @@
 #include <unistd.h> //getuid, pid_t
 #include <syslog.h> //openlog, syslog
 #include <string.h> // strerror, perror
-#include <signal.h> //sig_atomic_t typ
 #include <errno.h> //do uzywania zmiennej errno (wyluskiwanie kodu bledu, makra bledow)
+#include <limits.h>
+#include <setjmp.h>
+/*
+#define _NSIG 64 
+#define _NSIG_BPW 32 
+#define _NSIG_WORDS (_NSIG / _NSIG_BPW) 
 
-volatile sig_atomic_t work_in_loop = 1;
+typedef struct { 
+unsigned long sig[_NSIG_WORDS]; 
+} sigset_t;*/
+
+jmp_buf powrot;
 
 int isDir(char *string_to_check);
 
+void skanujKatalog(char *katalog);
+
 void handler(int signum)
 {
-    work_in_loop = 0;
+    longjmp(powrot, 1);
 }
 
 int main (int argc, char **argv)
@@ -75,13 +88,13 @@ int main (int argc, char **argv)
     umask(0);
 
     openlog("Demon_monitorujacy", LOG_PERROR | LOG_PID | LOG_NDELAY, 
-                                0); // logowanie bledow getopt_long
+                                0); // logowanie do syslogu
 
     sid = setsid(); // przypisanie procesu potomnego do sesji
     if (sid < 0) 
     {
         blad = errno;
-        syslog(LOG_MAKEPRI(LOG_USER, LOG_ERR), "Przypisanie procesowi sesji: %s", 
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_ERR), "Przypisanie procesowi sesji: %s (exit)", 
                                                                 strerror(blad));
             exit(EXIT_FAILURE);
     }
@@ -89,7 +102,7 @@ int main (int argc, char **argv)
     if ((chdir("/")) < 0) // zmiana katalogu roboczego na jedyny na pewno istniejacy
     {
         blad = errno;
-        syslog(LOG_MAKEPRI(LOG_USER, LOG_ERR), "Zmiana katalogu na /: %s", 
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_ERR), "Zmiana katalogu na /: %s (exit)", 
                                                         strerror(blad));
         exit(EXIT_FAILURE);
     }
@@ -102,6 +115,8 @@ int main (int argc, char **argv)
     syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO), "SID procesu demona: %d", 
                                                             sid);
     syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO), "Katalog roboczy: /");
+
+    /* Deklaracja zmiennych na argumenty inicjalizacyjne */
 
     static int podano_katalog_zrodlowy_flaga = 0;    /* flaga opcji s */
     static char *katalog_zrodlowy;                   /* wartosc opcji s */
@@ -116,6 +131,10 @@ int main (int argc, char **argv)
     static float prog_dozego_pliku_w_MB = 10.0;
 
     int processed_argument;     /* przetwarzany przez getopt_long() */
+
+    /******************************/
+
+
     
     while (1)
     {
@@ -171,38 +190,38 @@ int main (int argc, char **argv)
     if (czas_spania_demona <= 0)
     {
         syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), 
-                            "Czas spania demona musi byc dodatni.");
+                            "Czas spania demona musi byc dodatni. (exit)");
         exit(EXIT_FAILURE);
     }
 
     if (prog_dozego_pliku_w_MB <= 0)
     {
         syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), 
-                            "Wielkosc progowa dozego pliku musi byc dodatnia.");
+                            "Wielkosc progowa dozego pliku musi byc dodatnia. (exit)");
         exit(EXIT_FAILURE);
     }
 
     if (podano_katalog_zrodlowy_flaga == 0)
     {
         syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), 
-                            "Nalezy podac katalog zrodlowy.");
+                            "Nalezy podac katalog zrodlowy. (exit)");
         exit(EXIT_FAILURE);
     }
 
     if (podano_katalog_docelowy_flaga == 0)
     {
         syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), 
-                            "Nalezy podac katalog docelowy.");
+                            "Nalezy podac katalog docelowy. (exit)");
         exit(EXIT_FAILURE);
     }
 
     if ( isDir(katalog_zrodlowy) == -1 )
         exit(EXIT_FAILURE);
 
-    if ( access(katalog_zrodlowy, R_OK) == -1 )
+    if ( access(katalog_zrodlowy, R_OK | X_OK) == -1 )
     {
         blad = errno;
-        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s", katalog_zrodlowy
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s (exit)", katalog_zrodlowy
                                                         , strerror(blad));
         exit(EXIT_FAILURE);
     }
@@ -210,10 +229,10 @@ int main (int argc, char **argv)
     if ( isDir(katalog_docelowy) == -1)
         exit(EXIT_FAILURE);
 
-    if ( access(katalog_docelowy, R_OK | W_OK) == -1 )
+    if ( access(katalog_docelowy, R_OK | W_OK | X_OK) == -1 )
     {
         blad = errno;
-        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s", katalog_docelowy
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s (exit)", katalog_docelowy
                                                         , strerror(blad));
         exit(EXIT_FAILURE);
     }
@@ -238,6 +257,28 @@ int main (int argc, char **argv)
         printf("\n");
     }
 
+    /* Uzyskanie bezwglednych sciezek katalogow */
+
+    realpath(katalog_zrodlowy, katalog_zrodlowy);
+    realpath(katalog_docelowy, katalog_docelowy);
+
+    /* Bledy realpath() pokrywaja sie z juz sprawdzanymi bledami stat()*/
+
+    if(katalog_docelowy == NULL)
+    {
+        blad = errno;
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s (exit)", katalog_zrodlowy
+                                                        , strerror(blad));
+        exit(EXIT_FAILURE);
+    }
+    if(katalog_zrodlowy == NULL)
+    {
+        blad = errno;
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s (exit)", katalog_docelowy
+                                                        , strerror(blad));
+        exit(EXIT_FAILURE);
+    }
+
     /* zalogowanie poprawnych argumentow wejsciowych */
 
     syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO), 
@@ -253,13 +294,33 @@ int main (int argc, char **argv)
     syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO), 
                 "Prog dozego pliku[MB]: %f", prog_dozego_pliku_w_MB);
     
-    signal(SIGUSR1, handler); //TODO obsluga bledow!
-    while (work_in_loop)
+    sigset_t sygnaly_do_blokowania; //blokuj SIGUSR1 dopuki demon nie spi
+    sigemptyset(&sygnaly_do_blokowania); // wyzerowanie maski
+    if (sigaddset(&sygnaly_do_blokowania, SIGUSR1) == -1)
     {
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_WARNING), "%s (exit)", strerror(blad));
+        exit(EXIT_FAILURE);
+    }
+
+    signal(SIGUSR1, handler); //TODO obsluga bledow!
+
+    while (1)
+    {
+        sigprocmask (SIG_UNBLOCK, &sygnaly_do_blokowania, NULL);
+        if (setjmp(powrot) != 0)
+        {
+            syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO),
+            "Przebudzenie demona - sygnal SIGUSR1");
+        }
         /* skan katalogu zrodlowego */
 
+        /* zrob cala reszte*/
+
+        sigprocmask (SIG_UNBLOCK, &sygnaly_do_blokowania, NULL);
+        /* spij */
+
     }
-    syslog(LOG_MAKEPRI(LOG_USER, LOG_INFO), "Otrzymano sygnal SIGUSR1");
+    
     exit (0); //Nie tu konczyc i nwm czy tak.
 }
 
@@ -276,7 +337,7 @@ int isDir(char *string_to_check)
     {
         int blad = errno;
 
-        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s", string_to_check
+        syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), "%s %s (exit)", string_to_check
                                                         , strerror(blad));
 
         return -1;
@@ -284,9 +345,14 @@ int isDir(char *string_to_check)
     if (S_ISDIR(katalog_do_weryfikacji.st_mode) == 0)
     {
         syslog(LOG_MAKEPRI(LOG_USER, LOG_NOTICE), 
-                "%s nie jest katalogiem.", string_to_check);
+                "%s nie jest katalogiem. (exit)", string_to_check);
         return -1;
     }
     return 0;
+}
+
+void skanujKatalog(char *katalog)
+{
+    
 }
 
